@@ -78,11 +78,11 @@ once, and the table reports the best of three runs.
 
 | case | mojo-scikit-survival | scikit-survival | result |
 | --- | ---: | ---: | ---: |
-| `concordance_index_censored` (12k) | 9.05 ms | 850.19 ms | 93.90x faster |
-| `kaplan_meier_estimator` (1m) | 230.55 ms | 1411.03 ms | 6.12x faster |
-| `brier_score` (300k x 24) | 156.70 ms | 965.86 ms | 6.16x faster |
-| `cumulative_dynamic_auc` (2k x 12) | 1.47 ms | 19.61 ms | 13.38x faster |
-| `CoxPH.fit` Breslow (20k x 10) | 54.52 ms | 1004.14 ms | 18.42x faster |
+| `concordance_index_censored` (12k) | 9.81 ms | 776.22 ms | 79.16x faster |
+| `kaplan_meier_estimator` (1m) | 190.37 ms | 1161.87 ms | 6.10x faster |
+| `brier_score` (300k x 24) | 120.85 ms | 767.53 ms | 6.35x faster |
+| `cumulative_dynamic_auc` (2k x 12) | 1.44 ms | 15.21 ms | 10.57x faster |
+| `CoxPH.fit` Breslow (20k x 10) | 45.86 ms | 955.31 ms | 20.83x faster |
 
 Concordance classifies comparable pairs with host-width SIMD and distributes large
 row sets across CPU workers. Brier-score time columns and sufficiently large dynamic
@@ -90,7 +90,10 @@ AUC scans are independent parallel tasks; smaller inputs remain serial. Dynamic 
 uses a descending risk sort followed by a linear ROC scan, including upstream's
 tolerance-based tie grouping.
 
-No GPU path is provided; this port currently targets CPU execution only.
+No GPU path is provided. None of these kernels has enough exploitable arithmetic
+intensity to justify host/device transfers: Brier score is bandwidth-bound,
+concordance and AUC are comparison-heavy, and the KM and Cox risk-set recurrences
+are sequential. This port therefore targets CPU execution only.
 
 Run benchmarks only through the flocked task so concurrent jobs do not distort the
 measurements:
