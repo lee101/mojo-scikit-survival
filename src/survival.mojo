@@ -1,6 +1,6 @@
 """Numerical kernels for right-censored survival analysis."""
 
-from std.algorithm import parallelize
+from max.algorithm import parallelize
 from std.math import exp, log
 from std.runtime import initialize_runtime
 from std.sys import simd_width_of as simdwidthof
