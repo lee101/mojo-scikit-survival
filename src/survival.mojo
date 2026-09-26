@@ -1,8 +1,6 @@
 """Numerical kernels for right-censored survival analysis."""
 
-from max.algorithm import parallelize
 from std.math import exp, log
-from std.runtime import initialize_runtime
 from std.sys import simd_width_of as simdwidthof
 
 comptime Ptr = UnsafePointer[Float64, AnyOrigin[mut=True]]
@@ -118,17 +116,8 @@ def concordance(
     var weight = p(weight_address)
     var stats = p(stats_address)
     var work = p(work_address)
-    if n >= 2048:
-        initialize_runtime()
-
-        @parameter
-        def compute_row(i: Int):
-            concordance_row(event, time, estimate, work, i, n, tied_tol)
-
-        parallelize[compute_row](n)
-    else:
-        for i in range(n):
-            concordance_row(event, time, estimate, work, i, n, tied_tol)
+    for i in range(n):
+        concordance_row(event, time, estimate, work, i, n, tied_tol)
     var concordant = 0.0
     var discordant = 0.0
     var tied_risk = 0.0
@@ -253,72 +242,54 @@ def brier_score(
     var prob_t = p(prob_t_address)
     var scores = p(scores_address)
 
-    @parameter
-    def compute_time(k: Int):
-        var total = 0.0
-        for i in range(n):
+    comptime W = simdwidthof[DType.float64]()
+    var zero = SIMD[DType.float64, W](0.0)
+    var k = 0
+    while k + W <= n_times:
+        scores.store(k, zero)
+        k += W
+    while k < n_times:
+        scores[k] = 0.0
+        k += 1
+    for i in range(n):
+        var time_i = SIMD[DType.float64, W](time[i])
+        k = 0
+        while k + W <= n_times:
+            var predictions = estimate.load[width=W](i * n_times + k)
+            var evaluation_times = eval_times.load[width=W](k)
+            var probabilities = prob_t.load[width=W](k)
+            var contribution = SIMD[DType.float64, W](0.0)
+            if event[i] != 0 and prob_y[i] > 0.0:
+                contribution += evaluation_times.ge(time_i).select(
+                    predictions * predictions / prob_y[i], zero
+                )
+            var after = evaluation_times.lt(time_i) & probabilities.gt(zero)
+            var error = 1.0 - predictions
+            contribution += after.select(
+                error * error / probabilities, zero
+            )
+            scores.store(
+                k, scores.load[width=W](k) + contribution
+            )
+            k += W
+        while k < n_times:
             var prediction = estimate[i * n_times + k]
             if time[i] <= eval_times[k] and event[i] != 0:
                 if prob_y[i] > 0.0:
-                    total += prediction * prediction / prob_y[i]
+                    scores[k] += prediction * prediction / prob_y[i]
             elif time[i] > eval_times[k]:
                 if prob_t[k] > 0.0:
                     var error = 1.0 - prediction
-                    total += error * error / prob_t[k]
-        scores[k] = total / Float64(n)
-
-    if n * n_times >= 1000000 and n_times > 1:
-        initialize_runtime()
-        parallelize[compute_time](n_times)
-    else:
-        comptime W = simdwidthof[DType.float64]()
-        var zero = SIMD[DType.float64, W](0.0)
-        var k = 0
-        while k + W <= n_times:
-            scores.store(k, zero)
-            k += W
-        while k < n_times:
-            scores[k] = 0.0
+                    scores[k] += error * error / prob_t[k]
             k += 1
-        for i in range(n):
-            var time_i = SIMD[DType.float64, W](time[i])
-            k = 0
-            while k + W <= n_times:
-                var predictions = estimate.load[width=W](i * n_times + k)
-                var evaluation_times = eval_times.load[width=W](k)
-                var probabilities = prob_t.load[width=W](k)
-                var contribution = SIMD[DType.float64, W](0.0)
-                if event[i] != 0 and prob_y[i] > 0.0:
-                    contribution += evaluation_times.ge(time_i).select(
-                        predictions * predictions / prob_y[i], zero
-                    )
-                var after = evaluation_times.lt(time_i) & probabilities.gt(zero)
-                var error = 1.0 - predictions
-                contribution += after.select(
-                    error * error / probabilities, zero
-                )
-                scores.store(
-                    k, scores.load[width=W](k) + contribution
-                )
-                k += W
-            while k < n_times:
-                var prediction = estimate[i * n_times + k]
-                if time[i] <= eval_times[k] and event[i] != 0:
-                    if prob_y[i] > 0.0:
-                        scores[k] += prediction * prediction / prob_y[i]
-                elif time[i] > eval_times[k]:
-                    if prob_t[k] > 0.0:
-                        var error = 1.0 - prediction
-                        scores[k] += error * error / prob_t[k]
-                k += 1
-        k = 0
-        var count = SIMD[DType.float64, W](Float64(n))
-        while k + W <= n_times:
-            scores.store(k, scores.load[width=W](k) / count)
-            k += W
-        while k < n_times:
-            scores[k] /= Float64(n)
-            k += 1
+    k = 0
+    var count = SIMD[DType.float64, W](Float64(n))
+    while k + W <= n_times:
+        scores.store(k, scores.load[width=W](k) / count)
+        k += W
+    while k < n_times:
+        scores[k] /= Float64(n)
+        k += 1
 
 
 def dynamic_auc_at(
@@ -396,8 +367,7 @@ def dynamic_auc(
     var order = indices(order_address)
     var scores = p(scores_address)
 
-    @parameter
-    def compute_time(k: Int):
+    for k in range(n_times):
         dynamic_auc_at(
             event,
             time,
@@ -412,13 +382,6 @@ def dynamic_auc(
             k,
             tied_tol,
         )
-
-    if n * n_times >= 100000 and n_times > 1:
-        initialize_runtime()
-        parallelize[compute_time](n_times)
-    else:
-        for k in range(n_times):
-            compute_time(k)
 
 
 @export("mss_cox_evaluate")

@@ -84,11 +84,15 @@ once, and the table reports the best of three runs.
 | `cumulative_dynamic_auc` (2k x 12) | 1.44 ms | 15.21 ms | 10.57x faster |
 | `CoxPH.fit` Breslow (20k x 10) | 45.86 ms | 955.31 ms | 20.83x faster |
 
-Concordance classifies comparable pairs with host-width SIMD and distributes large
-row sets across CPU workers. Brier-score time columns and sufficiently large dynamic
-AUC scans are independent parallel tasks; smaller inputs remain serial. Dynamic AUC
-uses a descending risk sort followed by a linear ROC scan, including upstream's
-tolerance-based tie grouping.
+Concordance classifies comparable pairs with host-width SIMD. Brier score
+vectorises across evaluation times. Dynamic AUC uses a descending risk sort
+followed by a linear ROC scan, including upstream's tolerance-based tie
+grouping. All three run single-threaded: Mojo 1.2 removed closure capture, so
+these kernels can no longer be fanned out from inside a `parallelize` body, and
+none of them clears the roughly two-flops-per-byte bar that would make threading
+pay. Concordance is the closest call at about 0.9 flops per byte against its
+L2-resident scan; Brier score is bandwidth-bound and dynamic AUC is a
+comparison-heavy branchy scan.
 
 No GPU path is provided. None of these kernels has enough exploitable arithmetic
 intensity to justify host/device transfers: Brier score is bandwidth-bound,
